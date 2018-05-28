@@ -1,1 +1,773 @@
 
+A Transparent Ad-Blocking VPN via SoftEther + Privoxy by (https://www.williamjbowman.com/blog/2015/12/22/a-transparent-ad-blocking-vpn-via-softether-privoxy/)
+2015-12-22 :: tricks, linux 
+------------------------------------------------------------------------------------------------------------------------------------
+I recently, finally, got a smart phone—an iPhone. One of the first things that annoyed me were the ads. I use Ad-Block Plus on all my computers and I have not been bothered by ads in quite some time.
+
+One approach to removing ads is rooting my phone and installing a customized hosts file. This approach has several flaws. I once tried this approach on my android tablet. While better than nothing, it misses many ads and tends to interrupt normal internet use.
+
+Another approach, as of iOS 9, is to use Safari content filters. However, this requires me to use Safari, and I prefer Firefox.
+
+After lots of tinkering and reading and thinking, the best approach seems to be a VPN with proxy that seamlessly block ads (and potentially provide additional security, privacy, caching, and etc). There are apps that provide a VPN with ad blocking proxy, but reading their privacy policies caused me great concern. So I decided to setup my own.
+
+Credits
+-------
+Some of this was inspired by Lifehacker. Unfortunately, their approach has several flaws. For one, they use Hamachi. I prefer to use my own server and free software. Their setup is not seamless; it requires both configuring the VPN client and configuring the client browser. I want to block anything going through port 80; mobile ads are sneaky, so I want to make certain mobile apps could not just ignore proxy settings.
+
+Assumptions
+Before I explain my setup, I will explain some basic information about my machines and environment.
+
+I run Arch Linux on all my machines, including my server. I use systemd as my init system. I use ufw for my firewall. I use dhcp ([https://www.isc.org/software/dhcp][]) for my DHCP server. I use yaourt as my interface to Arch package repository and the AUR.
+
+I assume you are comfortable with, and in fact prefer, a terminal. I will prefix terminal commands that must be run as root or with sudo by “sudo”, such as sudo rm -rf /, and I will not prefix terminal commands that should be run as an unprivileged, such as echo 120.
+
+I assume you have a static public IPv4 address which I will call $PUBLIC_IP, a second static private IPv4 address which I will call $PRIVATE_IP. When we setup the VPN, I will assume you use the subnet 10.10.1.1/24. I assume your the ethernet card connected to the internet is eth0.
+
+I am using SoftEther version 4.19 Build 9599 and Privoxy version 3.0.23.
+
+Introduction
+------------
+The plan is this: the user should configure the device to connect via VPN. After that, all traffic should go through the VPN, and HTTP traffic should go through an ad-blocking, potentially caching, proxy, and back to the device. I do not consider caching at this point, although this approach will apply with a caching proxy equally well. Due to security concerns, I currently only block ads for HTTP content, although I will speculate about how to block ads for HTTPS content.
+
+I will provide links to all the configuration files, although I will show excerpts of the files here to aid in explanation.
+
+SoftEther VPN
+-------------
+I decided to use SoftEther because it can emulate many VPN implementations, is developed by a bunch of clever academics, and provides some unique features like VPN over DNS and VPN over ICMP. It has both command-line and GUI tools and is cross-platform. I do not discuss using VPN over DNS or over ICMP in this article.
+
+SoftEther can be configured either using a local bridge or the SecureNAT feature. One of them is required to assign IPs to the VPN clients and handle routing traffic through the single static public IP. The SecureNat feature is easy to use, but slow and prevents us from routing traffic manually (such as to an ad-blocking proxy), so we will use a local bridge.
+
+Installing SoftEther
+--------------------
+Installing SoftEther VPN is simple on Arch Linux: yaourt -S softethervpn-git.
+
+Configuring SoftEther
+---------------------
+SoftEther comes with a interactive configuration tool called vpncmd. I found this much easier to use than trying to edit the configuration file by hand. SoftEther also has a GUI configuration utility, but I never tried to use it. Unfortunately, the SoftEther documentation provides all the instructions using this GUI tool, so if you do not want to follow my steps quite precisely, you may be on your own. Most of my instructions are adapted from this helpful blog post and directly from the SoftEther documentation.
+
+After installing SoftEther, you need to start the server. The server must be started before it can be configured. You can (should) have your firewall active during this time, as you will only need to access the server locally via the configuration tool.
+
+1. sudo systemctl start softethervpn-server.service
+Next, launch the configuration tool:
+
+1. sudo vpncmd
+vpncmd command - SoftEther VPN Command Line Management Utility
+SoftEther VPN Command Line Management Utility (vpncmd command)
+Version 4.19 Build 9599   (English)
+Compiled 2015/10/19 20:09:05 by yagi at pc30
+Copyright (c) SoftEther VPN Project. All Rights Reserved.
+
+Enter 1 to select the management of server menu. Next enter localhost:5555 for the hostname of destination. Then leave the Virtual Hub Name empty and press enter. One you create an administrator password, you will need to enter a password at this point in the menu. By default, there is no administrator password. You should now be in the administrator menu for the VPN server.
+
+By using vpncmd program, the following can be achieved.
+
+1. Management of VPN Server or VPN Bridge
+2. Management of VPN Client
+3. Use of VPN Tools (certificate creation and Network Traffic Speed
+Test Tool)
+
+Select 1, 2 or 3: 1
+
+Specify the host name or IP address of the computer that the
+destination VPN Server or VPN Bridge is operating on.
+By specifying according to the format 'host name:port number', you can
+also specify the port number.
+(When the port number is unspecified, 443 is used.)
+If nothing is input and the Enter key is pressed, the connection will
+be made to the port number 8888 of localhost (this computer).
+Hostname of IP Address of Destination: localhost:5555
+
+If connecting to the server by Virtual Hub Admin Mode, please input
+the Virtual Hub name.
+If connecting by server admin mode, please press Enter without
+inputting anything.
+Specify Virtual Hub Name:
+Connection has been established with VPN Server "localhost" (port
+5555).
+
+You have administrator privileges for the entire VPN Server.
+
+VPN Server>help
+....
+You will probably want to set an administrator password first. Enter ServerPasswordSet in the prompt:
+
+VPN Server> ServerPasswordSet
+ServerPasswordSet command - Set VPN Server Administrator Password
+Please enter the password. To cancel press the Ctrl+D key.
+
+Password: ******
+Confirm input: ******
+
+The command completed successfully.
+
+VPN Server>
+Before we can create a user, we must select a hub, as users are local to hubs. For our purposes, we can use the default hub:
+
+VPN Server>Hub DEFAULT
+Hub command - Select Virtual Hub to Manage
+The Virtual Hub "DEFAULT" has been selected.
+The command completed successfully.
+VPN Server/DEFAULT>
+Now we create a user:
+
+VPN Server/DEFAULT>UserCreate
+UserCreate command - Create User
+User Name: exampleusername
+
+Assigned Group Name:
+
+User Full Name: John Smith
+
+User Description:
+
+The command completed successfully.
+
+VPN Server/DEFAULT>UserPasswordSet
+UserPasswordSet command - Set Password Authentication for User Auth
+Type and Set Password
+User Name: exampleusername
+
+Please enter the password. To cancel press the Ctrl+D key.
+
+Password: **********
+Confirm input: **********
+
+
+The command completed successfully.
+
+VPN Server/DEFAULT>
+For privacy reasons, you may want to disable the packet log:
+
+VPN Server/DEFAULT>LogDisable
+LogDisable command - Disable Security Log or Packet Log
+Select Security or Packet: Packet
+
+The command completed successfully.
+
+VPN Server/DEFAULT>
+Now we enable IPsec, which handles all the encryption of our VPN connection. I enable IPsec, and disable raw (unencrypted) L2TP. As far as I know, EtherIP / L2TPv3 are for site-to-site VPN, not for client-to-site, so I leave this disabled. You will need a create a shared secret key, and remember it for configuring the device later.
+
+VPN Server/DEFAULT>IPsecEnable
+IPsecEnable command - Enable or Disable IPsec VPN Server Function
+Enable L2TP over IPsec Server Function (yes / no): yes
+
+Enable Raw L2TP Server Function (yes / no): no
+
+Enable EtherIP / L2TPv3 over IPsec Server Function (yes / no): no
+
+Pre Shared Key for IPsec (Recommended: 9 letters at maximum): a-secret
+
+Default Virtual HUB in a case of omitting the HUB on the Username:
+DEFAULT
+
+The command completed successfully.
+
+VPN Server/DEFAULT>
+At this point, you should have a working VPN server. You could use the SecureNAT to test your connection now:
+
+VPN Server/DEFAULT>SecureNatEnable
+SecureNatEnable command - Enable the Virtual NAT and DHCP Server
+Function (SecureNat Function)
+The command completed successfully.
+You may need to open several ports in your firewall. I installed the the following ufw application rules then ran sudo ufw enable SoftEther.
+
+/etc/ufw/applications.d/softether
+1
+2
+3
+4
+5
+# /etc/ufw/applications.d/softether
+[SoftEther]
+title=SoftEther VPN
+description=SoftEther VPN
+ports=500,1701,4500/udp|1701,1723/tcp
+You may also want to browse the confiuration file and make changes. To do this, you should first turn off the server:
+
+1
+sudo systemctl stop softethervpn-server.service
+As of this writing, the configuration file is located in /usr/lib/softethervpn/vpnserver/vpn_server.config.
+
+Setting up a local bridge
+While the VPN is working, the SecureNAT is slow, resource intensive, and prevents us from creating a transparent proxy. Now we must setup the local bridge. Some of these instructions are adapted from this blog post, but that blog features only GUI configuration instructions for SoftEther.
+
+You will need to start the VPN server again if you turned it off previously. Run sudo vpncmd and return to the administrator menu. Disable SecureNAT if you enabled is previously:
+
+1
+2
+3
+4
+5
+6
+VPN Server/DEFAULT>SecureNatDisable
+SecureNatDisable command - Disable the Virtual NAT and DHCP Server
+Function (SecureNat Function)
+The command completed successfully.
+
+VPN Server/DEFAULT>
+Now we create a bridge device. We will create a tap device rather than bridge with an existing device, as this seems to simplify the transparent proxy setup. I assume you call the bridge device soft, but this choice is arbitrary. The prefix tap_ will be added to this name automatically. We use the command BridgeCreate which takes the hub DEFAULT, the named argument /DEVICE with the name of the device soft, and the named argument /TAP with value yes.
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+VPN Server/DEFAULT>BridgeCreate DEFAULT /DEVICE:soft /TAP:yes
+BridgeCreate command - Create Local Bridge Connection
+
+....
+
+The command completed successfully.
+
+VPN Server/DEFAULT>BridgeList
+BridgeList command - Get List of Local Bridge Connection
+Number|Virtual Hub Name|Network Adapter or Tap Device Name|Status
+------+----------------+----------------------------------+---------
+1     |DEFAULT         |soft                          |Operating
+The command completed successfully.
+
+VPN Server/DEFAULT>exit
+Now we enable a DHCP server for the VPN subnet. I configured /etc/dhcpd.conf as follows. The important bit is for subnet 10.10.1.0.
+
+/etc/dhcpd.conf
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+# /etc/dhcpd.conf
+
+# option definitions common to all supported networks...
+option domain-name "xxx";
+# DNS servers
+option domain-name-servers 8.8.8.8, 8.8.4.4;
+
+default-lease-time 600;
+max-lease-time 7200;
+
+# Use this to enable / disable dynamic dns updates globally.
+ddns-update-style none;
+
+# No service will be given on this subnet, but declaring it helps the
+# DHCP server to understand the network topology.
+
+subnet $PUBLIC_IP netmask 255.255.255.0 {
+}
+
+subnet $PRIVATE_IP netmask 255.255.128.0 {
+}
+
+subnet 10.10.1.0 netmask 255.255.255.0 {
+  option subnet-mask 255.255.255.0;
+  option routers 10.10.1.1;
+  range 10.10.1.47 10.10.1.57;
+}
+Next we start the tap device and the DHCP server:
+
+1
+2
+sudo systemctl start network@tap_soft
+sudo systemctl start dhcpd4@tap_soft
+It would be wise to add these as dependencies to softethervpn-server.service. This can be done by installing the following override:
+
+/etc/systemd/system/softethervpn-server.service.d/dhcpd.conf
+1
+2
+3
+4
+# /etc/systemd/system/softethervpn-server.service.d/dhcpd.conf
+[Unit]
+Before=dhcpd4@tap_soft.service network@tap_soft.service
+Requires=dhcpd4@tap_soft.service network@tap_soft.service
+Before we setup traffic forwarding for the VPN, we must ensure ipv4 forwarding is enabled in the kernel. Create the following override file, then run sysctl --system.
+
+/etc/sysctl.d/ipv4_forwarding.conf
+1
+2
+# /etc/sysctl.d/ipv4_forwarding.conf
+net.ipv4.ip_forward = 1
+Finally, we must forward traffic from the tap device to the internet device. You can issue the following commands with iptables or configure ufw to add them on startup. I will provide both instructions, but only follow one of them.
+
+Via iptables
+First, accept all traffic coming from the VPN:
+
+1
+2
+3
+sudo iptables -A INPUT -s 10.10.1.1/24 -m state --state NEW -j ACCEPT
+sudo iptables -A OUTPUT -s 10.10.1.1/24 -m state --state NEW -j ACCEPT
+sudo iptables -A FORWARD -s 10.10.1.1/24 -m state --state NEW -j ACCEPT
+Also accept all traffice from established connections:
+
+1
+2
+3
+sudo iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+Finally, forward all traffic from the tap device to the internet interface. If you use a static IP address on the server, use this command:
+
+1
+sudo iptables -t nat -A POSTROUTING -s 10.10.1.1/24 -j SNAT --to-source $PUBLIC_IP
+If your public IP address is not static, use this command:
+
+1
+sudo iptables -t nat -A POSTROUTING -s 10.10.1.1/24 -o eth0 -j MASQUERADE
+Via ufw
+If you use ufw, you can add the VPN forwarding rules to /etc/ufw/before.rules. These rules are in iptables-save format. Simiar methods may work for other higher-level firewall utilities. Below is an excerpt of the my before.rules file. The rules I have added are enclosed in #<<< #>>> comment tags, at lines 10—21, and lines 31—38.
+
+/etc/ufw/before.rules
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+# /etc/ufw/before.rules
+#
+# Rules that should be run before the ufw command line added rules. Custom
+# rules should be added to one of these chains:
+#   ufw-before-input
+#   ufw-before-output
+#   ufw-before-forward
+#
+
+#<<< Start of NAT table rules for VPN
+*nat
+:POSTROUTING ACCEPT [0:0]
+# Forward all VPN traffic through internet device.
+# Use this in a dynamic IP setting
+# -A POSTROUTING -s 10.10.1.1/24 -o eth0 -j MASQUERADE
+# Use this in a static IP setting
+-A POSTROUTING -o eth0 -s 10.10.1.1/24 -j SNAT --to-source 192.155.88.116
+
+# tell ufw to process the lines
+COMMIT
+#>>> End of VPN rules
+
+# Don't delete these required lines, otherwise there will be errors
+*filter
+:ufw-before-input - [0:0]
+:ufw-before-output - [0:0]
+:ufw-before-forward - [0:0]
+:ufw-not-local - [0:0]
+# End required lines
+
+#<<< Start of accept rules for VPN
+-A ufw-before-input -s 10.10.1.1/24 -m state --state NEW -j ACCEPT
+-A ufw-before-output -s 10.10.1.1/24 -m state --state NEW -j ACCEPT
+-A ufw-before-forward -s 10.10.1.1/24 -m state --state NEW -j ACCEPT
+# ufw already accepts input and output established connections; also
+# accept forward
+-A ufw-before-forward -m state --state ESTABLISHED,RELATED -j ACCEPT
+#>>> End of VPN Rules
+
+....
+
+COMMIT
+This concludes the VPN setup. Your VPN should now be working with a local bridge. You may need to restart the VPN or the DHCP server for firewall settings to take affect.
+
+Privoxy
+I decided to use Privoxy as my ad-blocking proxy. It is lightweight and easy to use, provides advanced filtering abilities, enables compressing outgoing content, and provides transparent HTTP proxying. There even exist tools such as adblock2privoxy2 for converting Ad-Block Plus blocklists to Privoxy filter files. Privoxy does not support caching or transparent HTTPS proxying. As transparent HTTPS proxying introduces security concerns, I will consider this lack of support a feature for now and speculate about how to gain transparent HTTPS proxying later.
+
+Installing Privoxy
+Installing Privoxy is simple on Arch Linux: yaourt -S privoxy.
+
+Configuring Privoxy
+Privoxy is easy to configure via the configuration file. To get started, set listen-address to your private IP and a port, then enable some actionsfiles and filterfiles. I assume you use port 8118.
+
+/etc/privoxy/config
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+# /etc/privoxy/config
+...
+
+listen-address $PRIVATE_IP:8118
+
+actionsfile match-all.action
+actionsfile default.action
+actionsfile user.action
+# actionsfile ab2p.system.action
+# actionsfile ab2p.action
+
+filterfile default.filter
+filterfile user.filter
+# filterfile ab2p.system.filter
+# filterfile ab2p.filter
+
+...
+There are some other useful options, such as compression-level and enable-remote-toggle. I add compression to save data on mobile devices, and enable remote toggle in case I find a website is broken by this setup. So far, I have not found any.
+
+After Privoxy is configured, enable and start it:
+
+1
+2
+sudo systemctl enable privoxy
+sudo systemctl start privoxy
+At this point, Privoxy should be available as a proxy on your VPN. You can manually setup HTTP and HTTPS proxies while connected to your VPN to test it out.
+
+Transparent Proxying
+To block ads on all HTTP connections, including sneaky mobile ads, and to provide a better user experience, we will setup transparent proxying. All HTTP requires coming from the VPN will automagically be proxied through Privoxy.
+
+First, we need one more iptables rule. This rule forwards all traffic from the VPN with destination port 80 to Privoxy, using dynamic NAT to handle multiplexing.
+
+1
+iptables -t nat -A PREROUTING -s 10.10.1.1/24 -p tcp -m multiport --dport 80 -j DNAT --to-destination $PRIVATE_IP:8118
+If you use ufw to manage your firewall, use the following diff for the before.rules file.
+
+/etc/ufw/before.rules
+1
+2
+3
+4
+5
+6
+7
+#<<< Start of NAT table rules for VPN
+*nat
+:POSTROUTING ACCEPT [0:0]
++ -A PREROUTING -s 10.10.1.1/24 -p tcp -m multiport --dport 80 -j DNAT --to-destination $PRIVATE_IP:8118
+# Forward all VPN traffic through internet device.
+# Use this in a dynamic IP setting
+#
+This forwarding rule is fragile; it would be better to use TPROXY. However, Privoxy does not support TPROXY, so this will have to do. For more information, see this thread, and the documentation for TPROXY.
+
+Finally, we need to enable intercept proxying in Privoxy:
+
+/etc/privoxy/config
+1
+2
+...
+accept-intercepted-requests 1
+Now that all HTTP traffic is automagically forwarded to Privoxy, it would be wise to add Privoxy as a dependency to SoftEther.
+
+/etc/systemd/system/softethervpn-server.service.d/privoxy.conf
+1
+2
+[Unit]
+Requires=privoxy.service
+Device Setup
+Now that the VPN is up and running, you can setup your device in the normal way. All HTTP traffic will be scrubbed of ads. However, you must manually connect the VPN when you want to use it. If you forget, you may end up seeing ads. If you also rely on this VPN for security, this is also a security risks. Worse still, iOS seems to disconnect the VPN from time to time when the phone has been idle for a while and not automagically reconnect. Instead, we would like the phone to automagically connect to the VPN before it tried to open any other network connections.
+
+iOS features “On-Demand VPN” which solves these problems. When any network connection is initiated, the system will ensure the VPN is on, establishing a new connection if necessary. More advanced configuration is possible that will enable the VPN only for certain requests or on certain access points, if that is the desired behavior. However, I assume the VPN is always desired.
+
+On-Demand VPN can only be configured by writing a VPN payload for a iOS configuration profile. The documentation for writing these profiles is incomplete and sometimes wrong. The file I discuss below works as of iOS 9.2 and OS X 10.9.3.
+
+A .mobileconfig file is an XML file with a MIME type application/x-apple-aspen-config. Each .mobileconfig is rooted at the <plist> tag, which contains a dictionary. This dictionary must define a PayloadType key whose value is exactly the string Configuration, and a PayloadVersion whose value is exactly the integer 1. The dictionary must also define the keys PayloadIdentifier and PayloadUUID. Identifiers must be reverse DNS-style identifiers, and UUIDs can be arbitrary as long as they are globally unique. OS X has a tool uuidgen for generating UUIDs.
+
+vpn.mobileconfig
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>PayloadIdentifier</key>
+    <string>com.example.config</string>
+
+    <key>PayloadUUID</key>
+    <string>....</string>
+
+    <key>PayloadType</key>
+    <string>Configuration</string>
+
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+
+....
+The important entry for the top-level dictionary is PayloadContent, which contains an array of dictionaries. Each of these dictionaries installs some payload on the device. We will create a payload for our VPN.
+
+To declare that this payload configures a VPN, use the PayloadType com.apple.vpn.managed. You must again give a PayloadVersion, PayloadIdentifier, and PayloadUUID. In this payload, the version need not be 1.
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+....
+    <key>PayloadContent</key>
+    <array>
+      <dict>
+        <key>PayloadType</key>
+        <string>com.apple.vpn.managed</string>
+
+        <key>PayloadVersion</key>
+        <integer>1</integer>
+
+        <key>PayloadIdentifier</key>
+        <string>com.example.config.vpn</string>
+
+        <key>PayloadUUID</key>
+        <string>....</string>
+....
+We first declare that all traffic should be routed through the VPN. By default, iOS and OS X try to avoid using the VPN unless a connection fails. This default behavior prevents our goal of blocking ads on all traffic.
+
+According to the documentation, we use the OverridePrimary key, which takes a boolean value, to force all traffic through the VPN. However, the documentation appears to be wrong on this point. Using this key does not change the default behavior. Instead, we appear to need to use the IPv4 key, which takes a dictionary value. In this dictionary, we add give the OverridePrimary key an integer value 1 representing true.
+
+We also declare the ProviderType to be packet-tunnel. This causes all traffic to tunnel through the VPN at the IP layer rather than the application layer.
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+....
+        <key>OverridePrimary</key>
+        <true/>
+
+        <key>IPv4</key>
+        <dict>
+          <key>OverridePrimary</key>
+          <integer>1</integer>
+        </dict>
+
+        <key>ProviderType</key>
+        <string>packet-tunnel</string>
+....
+Next we declare the type of VPN and configure the authentication details. We are using a L2TP VPN. This VPN requires setting keys in two different dictionaries to configure authentication. In the PPP dictionary, we define the username and password, the address of the VPN, and disable TokenCard (an advanced authentication mechanism that we are not using).
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+....
+        <key>VPNType</key>
+        <string>L2TP</string>
+
+        <key>PPP</key>
+        <dict>
+          <key>AuthName</key>
+          <string>exampleusername</string>
+
+          <key>TokenCard</key>
+          <false/>
+
+          <key>AuthPassword</key>
+          <string>password</string>
+
+          <key>CommRemoteAddress</key>
+          <string>$PUBLIC_IP</string>
+        </dict>
+....
+In the IPsec dictionary, we configure the shared secret. The shared secret must be base64 encoded. The documentation also tells us that we must set LocalIdentiferType to exactly the string KeyID.
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+        <key>IPSec</key>
+        <dict>
+          <key>AuthenticationMethod</key>
+          <string>SharedSecret</string>
+
+          <key>LocalIdentifierType</key>
+          <string>KeyID</string>
+
+          <key>SharedSecret</key>
+          <data>YS1zZWNyZXQ=</data>
+          ....
+The IPSec dictionary also contains the VPN On-Demand keys. To enable VPN On-Demand, we set the key OnDemandEnabled to the integer 1, representing true. Then we configure an array of rules for turning the VPN on or off. These rules are applied in the same order in which they appear in this array. These rules are applied any time a network change is detected, for instance, if the network is switched from WIFI to cellular, or if the card is reinitialized after sleeping. For a complete list, see the iOS configuration profile section “On Demand Rules Dictionary Keys”. A separate set of rules can be used to toggle the VPN for specific network connections, such as a browser connection to a specific host or domain.
+
+For our purposes, we only need 1 rule: unconditionally connect. This will ensure anytime any network card is initialized, we connect to the VPN before any connections are established.
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+        ....
+        <key>OnDemandEnabled</key>
+        <integer>1</integer>
+        <key>OnDemandRules</key>
+        <array>
+          <dict>
+            <key>Action</key>
+            <string>Connect</string>
+          </dict>
+        </array>
+      </dict>
+    </array>
+  </dict>
+</plist>
+This file can now be sent via email and then simply clicked to install the VPN. Ensure your mail client has the correct MIME type for the attachment or iOS will not consider the file a configuration profile; I had to add a line to ~/.mime.types.
+
+~/.mime.types
+1
+application/x-apple-aspen-config mobileconfig
+Digression: HTTPS Proxy
+While we are writing a configuration profile, we can install a HTTPS proxy to be used while connected to the VPN. The VPN is setup to transparently proxy HTTP requests, but we cannot (safely, or with Privoxy) transparently proxy HTTPS requests. Setting up an HTTPS proxy manually will instruct browsers to make HTTPS connection requests through the proxy. This will not provide ad-blocking via filtering (inside the pages), and it is concievable that malicious apps could ignore the proxy settings. However, this may provide ad-blocking by blocking ad-serving domains/ip requested through the proxy, and may enable Privoxy to compress HTTPS pages. This can be installed by adding a Proxies dictionary at the same level at the IPSec dictionary in the VPN payload:
+
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+        <key>Proxies</key>
+        <dict>
+          <key>HTTPSEnable</key>
+          <integer>1</integer>
+
+          <key>HTTPSProxy</key>
+          <string>$PRIVATE_IP</string>
+
+          <key>HTTPSPort</key>
+          <integer>8118</integer>
+        </dict>
+Conclusion
+Now, all traffic should be tunneled to your VPN and ads should be blocked. You can use this page to test the ad blocking abilities. If you spend some time configuring adblock2privoxy, you can convert Ad-Block Plus filters to Privoxy format, and get element hiding via Privoxy.
+
+After this setup, you can even block ads for all your friends by handing out a .mobileconfig file, perhaps after first creating new username/passwords for each. In fact, if anyone is interested, I would be willing to host an ad-blocking VPN service that does not log or sell your traffic information, for a nominal monthly fee (there are hosting costs).

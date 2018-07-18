@@ -1,6 +1,6 @@
-systemctl start vpnserver
+systemctl start vpnserver.service
 ifconfig tap_soft 10.10.1.1
-systemctl start isc-dhcpserver
+systemctl start isc-dhcp-server.service
 systemctl start squid
 /etc/init.d/ufdb restart
 
@@ -8,5 +8,5 @@ iptables -t nat -A POSTROUTING -s 10.10.1.0/24 -j SNAT --to-source 195.201.133.2
 iptables -t nat -A PREROUTING -i tap_soft -p tcp --dport 443 -j REDIRECT --to-port 3129
 iptables -t nat -A PREROUTING -i tap_soft -p udp --dport 443 -j REDIRECT --to-port 3129
  
- iptables -t nat -A PREROUTING -i tap_soft -p udp --dport 80 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -i tap_soft -p udp --dport 80 -j REDIRECT --to-port 3128
 iptables -t nat -A PREROUTING -i tap_soft -p tcp --dport 80 -j REDIRECT --to-port 3128
